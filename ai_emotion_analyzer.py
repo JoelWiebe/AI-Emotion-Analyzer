@@ -16,7 +16,7 @@ class EmotionClassifierClient:
     def __init__(self):
         vertexai.init(project=PROJECT_ID, location=LOCATION)
         self.model = GenerativeModel(GEMINI_MODEL,
-            system_instruction="""You are a research assistant specializing in emotion analysis in text. Your task is to classify the emotion conveyed in excerpts from parent responses about a childcare program and provide a confidence score with justification for each emotion. You will be provided with a rubric describing various emotions to guide your classification."""
+            system_instruction="""You are a research assistant specializing in emotion analysis in text. Your task is to classify the emotion conveyed in excerpts from parent responses about a childcare program and provide a confidence score with justification for each emotion. You will be provided with a codebook describing various emotions to guide your classification."""
         )
 
     def classify_excerpt(self, excerpt, question):
@@ -30,15 +30,15 @@ class EmotionClassifierClient:
 
         json_payload = json.dumps(payload, indent=2)
 
-        # Prompt template with emotion rubric and classification request
+        # Prompt template with emotion codebook and classification request
         prompt = (
             "The following is a JSON object containing an excerpt from a parent's response about a childcare program, along with the question they were responding to:\n\n"
             f"{json_payload}\n\n"
-            f"Please use the following rubric to classify the emotion expressed in the excerpt:\n\n"
-            f"{EMOTION_RUBRIC}\n\n"
+            f"Please use the following codebook to classify the emotion expressed in the excerpt:\n\n"
+            f"{EMOTION_CODEBOOK}\n\n"
             "Provide your classification as a JSON object. For each emotion, assess the confidence score (0 to 1) reflecting the degree to which the excerpt expresses that emotion, along with a brief justification for the score. The format should be:\n\n"
             "{\n  \"anger\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"fear\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"disgust\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"sadness\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"enjoyment\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"surprise\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"neutral\": {\"score\": 0.xx, \"justification\": \"...\"}\n}\n\n"
-            "Do not include any Markdown formatting in your response. Ensure the JSON is valid and does not contain any extra characters or formatting.\n"
+            "Ensure the JSON is valid and does not contain any extra characters or formatting.\n"
         )
         print(f"\nClassify excerpt prompt:\n\n{prompt}")
 
@@ -82,54 +82,66 @@ def process_spreadsheet(file_path, classifier_client):
         sheets = ["Challenges", "Benefits", "Concerns"]  
         required_columns = ["ResponseID", "NewID", "Text", "Manual_Coding"]
 
-        # Check if the spreadsheet has the correct sheets and columns
-        for sheet_name in sheets:
+        # Dictionary mapping sheet names to questions
+        question_map = {
+            "Challenges": "Please describe the challenges you experienced/noticed since the introduction of the low cost child care program?",
+            "Benefits": "Please describe the benefits you experienced/noticed since the introduction of the low cost child care program?",
+            "Concerns": "Do you have any concerns about any of the low cost child care program goals (Affordability/Accessibility/Inclusion/Quality/Administration)? Please describe."
+        }
+
+        # Check for missing sheets/columns
+        for sheet_name in sheets: 
             if sheet_name not in xls.sheet_names:
                 raise ValueError(f"Missing sheet: {sheet_name}")
-
             df = pd.read_excel(xls, sheet_name)
             for col in required_columns:
                 if col not in df.columns:
                     raise ValueError(f"Missing column '{col}' in sheet '{sheet_name}'")
 
-        # Process each sheet
-        for sheet_name in sheets:
-            print(f"Processing sheet: {sheet_name}")
-            df = pd.read_excel(xls, sheet_name)
-            
-            # Create new columns if they don't exist
-            new_columns = ["Model_Response", "AI_Coding", "AI_Confidence", "AI_Justification"]
-            for col in new_columns:
-                if col not in df.columns:
-                    df[col] = ""  # Initialize with empty strings
+        # Create a new Excel writer to save all results in one file
+        now = datetime.datetime.now()
+        timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+        output_file = os.path.join(OUTPUT_DIR, f"analyzed_results_{timestamp}.xlsx")
+        with pd.ExcelWriter(output_file) as writer:
+            # Process each sheet
+            for sheet_name in sheets:
+                print(f"Processing sheet: {sheet_name}")
 
-            # Iterate through rows and classify excerpts
-            for idx, row in df.iterrows():
-                question = sheet_name  # The question is the sheet name
-                text_excerpt = row["Text"]
-                
-                if not pd.isna(text_excerpt) and isinstance(text_excerpt, str):
-                    emotion_scores = classifier_client.classify_excerpt(text_excerpt, question)
+                assert sheet_name in question_map, f"Error: Sheet '{sheet_name}' is missing a corresponding question in the question_map."
+
+                df = pd.read_excel(xls, sheet_name)
+
+                # Create new columns if needed
+                new_columns = ["Model_Response", "AI_Coding", "AI_Confidence", "AI_Justification"]
+                for col in new_columns:
+                    if col not in df.columns:
+                        df[col] = ""
+
+                # Iterate through rows and classify excerpts
+                for idx, row in df.iterrows():
+                    question = question_map[sheet_name] 
+                    text_excerpt = row["Text"]
                     
-                    # Get highest scoring emotion directly
-                    highest_emotion = max(emotion_scores, key=lambda emotion: emotion_scores[emotion]["score"])
-                    highest_score = emotion_scores[highest_emotion]
+                    if not pd.isna(text_excerpt) and isinstance(text_excerpt, str):
+                        emotion_scores = classifier_client.classify_excerpt(text_excerpt, question)
+                        
+                        # Get highest scoring emotion directly
+                        highest_emotion = max(emotion_scores, key=lambda emotion: emotion_scores[emotion]["score"])
+                        highest_score = emotion_scores[highest_emotion]
 
-                    # Get justification (if available) - may need adjustment depending on exact response
-                    justification = emotion_scores.get(highest_emotion, {}).get("justification", "")
+                        # Get justification (if available) - may need adjustment depending on exact response
+                        justification = emotion_scores.get(highest_emotion, {}).get("justification", "")
 
-                    # Store results in the DataFrame
-                    df.at[idx, "Model_Response"] = json.dumps(emotion_scores)
-                    df.at[idx, "AI_Coding"] = highest_emotion
-                    df.at[idx, "AI_Confidence"] = highest_score
-                    df.at[idx, "AI_Justification"] = justification 
+                        # Store results in the DataFrame
+                        df.at[idx, "Model_Response"] = json.dumps(emotion_scores)
+                        df.at[idx, "AI_Coding"] = highest_emotion
+                        df.at[idx, "AI_Confidence"] = highest_score
+                        df.at[idx, "AI_Justification"] = justification 
 
-            # Save updated DataFrame back to Excel
-            now = datetime.datetime.now()
-            timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
-            output_file = os.path.join(OUTPUT_DIR, f"analyzed_{sheet_name}_{timestamp}.xlsx")
-            df.to_excel(output_file, index=False)
-            print(f"Results for '{sheet_name}' saved to: {output_file}")
+                # Save to specific sheet in the Excel writer
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+        print(f"All results saved to: {output_file}")
 
 
 def main():

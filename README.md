@@ -65,4 +65,4 @@ GEMINI_MODEL=gemini-1.5-flash-001 # or your preferred model
 To run the unit tests, use the following command:
 ```bash
 python -m unittest test_ai_data_extractor.py
-```# ai-emotion-detector
+```
