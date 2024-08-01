@@ -129,14 +129,17 @@ def process_spreadsheet(file_path, classifier_client):
                         highest_emotion = max(emotion_scores, key=lambda emotion: emotion_scores[emotion]["score"])
                         highest_score = emotion_scores[highest_emotion]
 
-                        # Get justification (if available) - may need adjustment depending on exact response
-                        justification = emotion_scores.get(highest_emotion, {}).get("justification", "")
-
                         # Store results in the DataFrame
                         df.at[idx, "Model_Response"] = json.dumps(emotion_scores)
+
+                        # Extract and store individual emotion scores
+                        for emotion in EMOTION_CODEBOOK:
+                            score = emotion_scores[emotion]["score"]
+                            df.at[idx, f"{emotion}_score"] = score
+
                         df.at[idx, "AI_Coding"] = highest_emotion
-                        df.at[idx, "AI_Confidence"] = highest_score
-                        df.at[idx, "AI_Justification"] = justification 
+                        df.at[idx, "AI_Confidence"] = highest_score["score"]  
+                        df.at[idx, "AI_Justification"] = highest_score["justification"] 
 
                 # Save to specific sheet in the Excel writer
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
