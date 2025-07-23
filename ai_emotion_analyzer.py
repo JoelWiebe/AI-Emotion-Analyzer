@@ -20,7 +20,6 @@ from config import (
     QUESTION,
     SHEET_NAME,
     BATCH_SIZE,
-    CONTEXT_COLUMNS,
     EMOTION_CODEBOOK,
     INPUT_DIR,
     OUTPUT_DIR,
@@ -77,8 +76,8 @@ class EmotionClassifierClient:
         json_payload = json.dumps(payload, indent=2)
 
         prompt = (
-            "The following JSON object contains a batch of excerpts from parent responses, each with context. "
-            "Analyze each excerpt individually using this context.\n\n"
+            "The following JSON object contains a batch of excerpts from parent responses. "
+            "Analyze each excerpt individually.\n\n"
             f"{json_payload}\n\n"
             f"CODEBOOK:\n{json.dumps(EMOTION_CODEBOOK, indent=2)}\n\n"
             "For EACH excerpt, provide your analysis as a JSON object. Return your complete analysis as a single, "
@@ -113,7 +112,7 @@ class EmotionClassifierClient:
             ]
         )
 
-        # --- NEW: Log and display the prompt ---
+        # --- Log and display the prompt ---
         log_header = f"""
 {'='*80}
 BATCH {batch_num}/{total_batches} - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
@@ -126,7 +125,7 @@ BATCH {batch_num}/{total_batches} - {datetime.datetime.now().strftime('%Y-%m-%d 
         with open(self.log_file_path, 'a', encoding='utf-8') as f:
             f.write(log_header)
             f.write(prompt + '\n')
-        # --- END OF NEW CODE ---
+        # --- END OF LOGIC ---
 
         try:
             response_chunks = self.client.models.generate_content_stream(
@@ -137,14 +136,14 @@ BATCH {batch_num}/{total_batches} - {datetime.datetime.now().strftime('%Y-%m-%d 
             
             full_response_text = "".join(chunk.text for chunk in response_chunks)
             
-            # --- NEW: Log and display the response ---
+            # --- Log and display the response ---
             response_header = "\n---------- FULL RESPONSE FROM MODEL ----------\n"
             print(response_header)
             print(full_response_text)
             with open(self.log_file_path, 'a', encoding='utf-8') as f:
                 f.write(response_header)
                 f.write(full_response_text + '\n')
-            # --- END OF NEW CODE ---
+            # --- END OF LOGIC ---
 
             clean_response = re.sub(r'```json\s*(.*)\s*```', r'\1', full_response_text, flags=re.DOTALL)
             return json.loads(clean_response)
@@ -171,7 +170,7 @@ def process_spreadsheet(file_path, classifier_client):
         return
 
     base_columns = ["ResponseID", "NewID", "Text"]
-    all_required_columns = base_columns + CONTEXT_COLUMNS
+    all_required_columns = base_columns
     for col in all_required_columns:
         if col not in df.columns:
             raise ValueError(f"Missing required column '{col}' in sheet '{SHEET_NAME}'")
@@ -195,12 +194,13 @@ def process_spreadsheet(file_path, classifier_client):
         batch_num = (i // BATCH_SIZE) + 1
         print(f"--- Processing Batch {batch_num}/{total_batches} ---")
         
-        # --- MODIFIED: Pass batch numbers for logging ---
+        # Pass batch numbers for logging
         results = classifier_client.classify_batch(model_batch_payload, batch_num, total_batches)
         for result in results:
             if result.get("NewID") and result.get("analysis"):
                 results_map[result["NewID"]] = json.dumps(result["analysis"])
 
+    # The output dataframe will only contain the base columns plus the model response.
     output_df = df[all_required_columns].copy()
     output_df['Model_Response'] = output_df['NewID'].map(results_map)
 
@@ -217,14 +217,13 @@ def main():
     try:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         
-        # --- NEW: Set up log file path ---
+        # Set up log file path
         now = datetime.datetime.now()
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
         log_filename = f"prompt_log_{timestamp}.txt"
         log_file_path = os.path.join(OUTPUT_DIR, log_filename)
-        # --- END OF NEW CODE ---
 
-        # --- MODIFIED: Pass log path to client ---
+        # Pass log path to client
         classifier_client = EmotionClassifierClient(log_file_path=log_file_path)
         file_path = os.path.join(INPUT_DIR, SPREADSHEET_FILENAME)
         process_spreadsheet(file_path, classifier_client)
