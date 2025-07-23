@@ -1,158 +1,236 @@
+# ai_emotion_analyzer.py
+
 import os
 import json
 import pandas as pd
-import vertexai
 import datetime
-from config import *
 import re
-import vertexai
-from vertexai.generative_models import GenerativeModel
-import vertexai.preview.generative_models as generative_models
+from math import ceil
+import traceback # Import the traceback module for detailed error logging
 
+# Import the Google GenAI library
+from google import genai
+from google.genai import types
 
-
+# Import settings from the configuration file
+from config import (
+    PROJECT_ID,
+    LOCATION,
+    GEMINI_MODEL,
+    QUESTION,
+    SHEET_NAME,
+    BATCH_SIZE,
+    CONTEXT_COLUMNS,
+    EMOTION_CODEBOOK,
+    INPUT_DIR,
+    OUTPUT_DIR,
+    SPREADSHEET_FILENAME
+)
 
 class EmotionClassifierClient:
-    def __init__(self):
-        vertexai.init(project=PROJECT_ID, location=LOCATION)
-        self.model = GenerativeModel(GEMINI_MODEL,
-            system_instruction="""You are a research assistant specializing in emotion analysis in text. Your task is to classify the emotion conveyed in excerpts from parent responses about a childcare program and provide a confidence score with justification for each emotion. You will be provided with a codebook describing various emotions to guide your classification."""
-        )
+    """
+    A client to classify emotions in text batches using the Google GenAI library for Vertex AI,
+    following the provided exemplar for API calls.
+    """
+    def __init__(self, log_file_path):
+        """
+        Initializes the unified client for Vertex AI and sets up the log file path.
+        """
+        try:
+            # Initialize the client as shown in the exemplar.
+            self.client = genai.Client(
+                vertexai=True,
+                project=PROJECT_ID,
+                location=LOCATION,
+            )
+            self.log_file_path = log_file_path
+            print(f"✅ Client initialized for project '{PROJECT_ID}' in location '{LOCATION}'.")
+            print(f"📝 Logging prompts and responses to: {self.log_file_path}")
 
-    def classify_excerpt(self, excerpt, question):
-        print(f"\nProcessing excerpt: {excerpt}")
+        except Exception as e:
+            print("\n❌ Client Initialization Failed.")
+            print(f"  - Project ID: '{PROJECT_ID}'")
+            print(f"  - Location: '{LOCATION}'")
+            print("\nPlease check your .env file, authentication, and Google Cloud project settings.\n")
+            raise e
 
-        # Create JSON payload for Gemini with the excerpt and question
+
+    def classify_batch(self, excerpts_batch, batch_num, total_batches):
+        """
+        Classifies a batch of text excerpts for emotions using a streaming API call.
+
+        Args:
+            excerpts_batch (list): A list of dictionaries for the batch.
+            batch_num (int): The current batch number.
+            total_batches (int): The total number of batches.
+
+        Returns:
+            list: A list of dictionaries with the emotion analysis for each excerpt,
+                  or an empty list if an error occurs.
+        """
+        print(f"\nProcessing a batch of {len(excerpts_batch)} excerpts...")
+
         payload = {
-            "excerpt": excerpt,
-            "question": question
+            "question_asked": QUESTION,
+            "excerpts_to_classify": excerpts_batch
         }
-
         json_payload = json.dumps(payload, indent=2)
 
-        # Prompt template with emotion codebook and classification request
         prompt = (
-            "The following is a JSON object containing an excerpt from a parent's response about a childcare program, along with the question they were responding to:\n\n"
+            "The following JSON object contains a batch of excerpts from parent responses, each with context. "
+            "Analyze each excerpt individually using this context.\n\n"
             f"{json_payload}\n\n"
-            f"Please use the following codebook to classify the emotion expressed in the excerpt:\n\n"
-            f"{EMOTION_CODEBOOK}\n\n"
-            "Provide your classification as a JSON object. For each emotion, assess the confidence score (0 to 1) reflecting the degree to which the excerpt expresses that emotion, along with a brief justification for the score. The format should be:\n\n"
-            "{\n  \"anger\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"fear\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"disgust\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"sadness\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"enjoyment\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"surprise\": {\"score\": 0.xx, \"justification\": \"...\"},\n  \"neutral\": {\"score\": 0.xx, \"justification\": \"...\"}\n}\n\n"
-            "Ensure the JSON is valid and does not contain any extra characters or formatting.\n"
+            f"CODEBOOK:\n{json.dumps(EMOTION_CODEBOOK, indent=2)}\n\n"
+            "For EACH excerpt, provide your analysis as a JSON object. Return your complete analysis as a single, "
+            "valid JSON list, where each object corresponds to one input excerpt and uses the following format:\n\n"
+            "[\n"
+            "  {\n"
+            "    \"NewID\": \"(The ID of the first excerpt)\",\n"
+            "    \"analysis\": {\n"
+            "      \"anger\": {\"score\": 0.xx, \"justification\": \"...\"},\n"
+            "      \"fear\": {\"score\": 0.xx, \"justification\": \"...\"},\n"
+            "      \"disgust\": {\"score\": 0.xx, \"justification\": \"...\"},\n"
+            "      \"sadness\": {\"score\": 0.xx, \"justification\": \"...\"},\n"
+            "      \"enjoyment\": {\"score\": 0.xx, \"justification\": \"...\"},\n"
+            "      \"surprise\": {\"score\": 0.xx, \"justification\": \"...\"}\n"
+            "    }\n"
+            "  }\n"
+            "]\n\n"
+            "Ensure the output is ONLY the JSON list, without any surrounding text or markdown."
         )
-        print(f"\nClassify excerpt prompt:\n\n{prompt}")
 
-        # Generate classifications 
-        generation_config = {
-            "max_output_tokens": 1024,
-            "temperature": 0.2,
-            "top_p": 0.95,
-            "top_k": 40
-        }
+        contents = [prompt]
 
-        safety_settings = {
-            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-        }
-        
-        # Call the model to predict and get results in string format
-        response = self.model.generate_content(prompt, generation_config=generation_config, safety_settings=safety_settings).text
-        print(f"\nClassify excerpt response:\n\n{response}")
+        generation_config = types.GenerateContentConfig(
+            temperature=0.2,
+            top_p=0.95,
+            max_output_tokens=8192,
+            safety_settings=[
+                types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+                types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+                types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+            ]
+        )
 
-        clean_response = remove_json_markdown(response) 
+        # --- NEW: Log and display the prompt ---
+        log_header = f"""
+{'='*80}
+BATCH {batch_num}/{total_batches} - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+{'='*80}
 
-        print(f"Classify exerpt response:\n\n{clean_response}")
-        
-        # convert the results to a python dictionary
-        response_dict = json.loads(clean_response)
+---------- PROMPT SENT TO MODEL ----------
+"""
+        print(log_header)
+        print(prompt)
+        with open(self.log_file_path, 'a', encoding='utf-8') as f:
+            f.write(log_header)
+            f.write(prompt + '\n')
+        # --- END OF NEW CODE ---
 
-        return response_dict
-    
+        try:
+            response_chunks = self.client.models.generate_content_stream(
+                model=GEMINI_MODEL,
+                contents=contents,
+                config=generation_config,
+            )
+            
+            full_response_text = "".join(chunk.text for chunk in response_chunks)
+            
+            # --- NEW: Log and display the response ---
+            response_header = "\n---------- FULL RESPONSE FROM MODEL ----------\n"
+            print(response_header)
+            print(full_response_text)
+            with open(self.log_file_path, 'a', encoding='utf-8') as f:
+                f.write(response_header)
+                f.write(full_response_text + '\n')
+            # --- END OF NEW CODE ---
 
-def remove_json_markdown(text):
-    pattern = re.compile(r'```json\s*(.*?)\s*```', re.DOTALL)
-    return pattern.sub(r'\1', text)
+            clean_response = re.sub(r'```json\s*(.*)\s*```', r'\1', full_response_text, flags=re.DOTALL)
+            return json.loads(clean_response)
+            
+        except Exception as e:
+            print("\n" + "="*80)
+            print("❌ AN UNEXPECTED ERROR OCCURRED".center(80))
+            print("="*80)
+            print("\n[ERROR DETAILS]")
+            print(f"Type: {type(e).__name__}")
+            print(f"Message: {e}")
+            print("\n[FULL TRACEBACK]")
+            traceback.print_exc()
+            print("\n" + "="*80)
+            return []
 
-    
+
 def process_spreadsheet(file_path, classifier_client):
-    # Load Excel workbook
-    with pd.ExcelFile(file_path) as xls:
-        sheets = ["Challenges", "Benefits", "Concerns"]  
-        required_columns = ["ResponseID", "NewID", "Text", "Manual_Coding"]
+    """Loads a spreadsheet, processes texts in batches, and saves the raw model output."""
+    try:
+        df = pd.read_excel(file_path, sheet_name=SHEET_NAME)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"❌ Error reading spreadsheet: {e}")
+        return
 
-        # Dictionary mapping sheet names to questions
-        question_map = {
-            "Challenges": "Please describe the challenges you experienced/noticed since the introduction of the low cost child care program?",
-            "Benefits": "Please describe the benefits you experienced/noticed since the introduction of the low cost child care program?",
-            "Concerns": "Do you have any concerns about any of the low cost child care program goals (Affordability/Accessibility/Inclusion/Quality/Administration)? Please describe."
-        }
+    base_columns = ["ResponseID", "NewID", "Text"]
+    all_required_columns = base_columns + CONTEXT_COLUMNS
+    for col in all_required_columns:
+        if col not in df.columns:
+            raise ValueError(f"Missing required column '{col}' in sheet '{SHEET_NAME}'")
 
-        # Check for missing sheets/columns
-        for sheet_name in sheets: 
-            if sheet_name not in xls.sheet_names:
-                raise ValueError(f"Missing sheet: {sheet_name}")
-            df = pd.read_excel(xls, sheet_name)
-            for col in required_columns:
-                if col not in df.columns:
-                    raise ValueError(f"Missing column '{col}' in sheet '{sheet_name}'")
+    df_to_process = df[pd.notna(df['Text']) & (df['Text'] != "")]
+    excerpt_list = df_to_process[all_required_columns].to_dict('records')
+    
+    results_map = {}
+    total_batches = ceil(len(excerpt_list) / BATCH_SIZE)
+    print(f"Beginning processing for {len(excerpt_list)} excerpts in {total_batches} batches.")
 
-        # Create a new Excel writer to save all results in one file
-        now = datetime.datetime.now()
-        timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
-        output_file = os.path.join(OUTPUT_DIR, f"analyzed_results_{timestamp}.xlsx")
-        with pd.ExcelWriter(output_file) as writer:
-            # Process each sheet
-            for sheet_name in sheets:
-                print(f"Processing sheet: {sheet_name}")
+    for i in range(0, len(excerpt_list), BATCH_SIZE):
+        batch_records = excerpt_list[i:i + BATCH_SIZE]
+        
+        model_batch_payload = []
+        for record in batch_records:
+            payload_item = record.copy()
+            payload_item.pop("ResponseID", None)
+            model_batch_payload.append(payload_item)
+            
+        batch_num = (i // BATCH_SIZE) + 1
+        print(f"--- Processing Batch {batch_num}/{total_batches} ---")
+        
+        # --- MODIFIED: Pass batch numbers for logging ---
+        results = classifier_client.classify_batch(model_batch_payload, batch_num, total_batches)
+        for result in results:
+            if result.get("NewID") and result.get("analysis"):
+                results_map[result["NewID"]] = json.dumps(result["analysis"])
 
-                assert sheet_name in question_map, f"Error: Sheet '{sheet_name}' is missing a corresponding question in the question_map."
+    output_df = df[all_required_columns].copy()
+    output_df['Model_Response'] = output_df['NewID'].map(results_map)
 
-                df = pd.read_excel(xls, sheet_name)
-
-                # Create new columns if needed
-                new_columns = ["Model_Response", "AI_Coding", "AI_Confidence", "AI_Justification"]
-                for col in new_columns:
-                    if col not in df.columns:
-                        df[col] = ""
-
-                # Iterate through rows and classify excerpts
-                for idx, row in df.iterrows():
-                    question = question_map[sheet_name] 
-                    text_excerpt = row["Text"]
-                    
-                    if not pd.isna(text_excerpt) and isinstance(text_excerpt, str):
-                        emotion_scores = classifier_client.classify_excerpt(text_excerpt, question)
-                        
-                        # Get highest scoring emotion directly
-                        highest_emotion = max(emotion_scores, key=lambda emotion: emotion_scores[emotion]["score"])
-                        highest_score = emotion_scores[highest_emotion]
-
-                        # Store results in the DataFrame
-                        df.at[idx, "Model_Response"] = json.dumps(emotion_scores)
-
-                        # Extract and store individual emotion scores
-                        for emotion in EMOTION_CODEBOOK:
-                            score = emotion_scores[emotion]["score"]
-                            df.at[idx, f"{emotion}_score"] = score
-
-                        df.at[idx, "AI_Coding"] = highest_emotion
-                        df.at[idx, "AI_Confidence"] = highest_score["score"]  
-                        df.at[idx, "AI_Justification"] = highest_score["justification"] 
-
-                # Save to specific sheet in the Excel writer
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
-
-        print(f"All results saved to: {output_file}")
+    now = datetime.datetime.now()
+    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+    output_filename = f"llm_raw_output_{SHEET_NAME.replace(' ', '_')}_{timestamp}.xlsx"
+    output_file_path = os.path.join(OUTPUT_DIR, output_filename)
+    
+    output_df.to_excel(output_file_path, sheet_name='LLM_Raw_Output', index=False)
+    print(f"\n✅ Processing complete. Raw model results saved to: {output_file_path}")
 
 
 def main():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    classifier_client = EmotionClassifierClient()
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        
+        # --- NEW: Set up log file path ---
+        now = datetime.datetime.now()
+        timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+        log_filename = f"prompt_log_{timestamp}.txt"
+        log_file_path = os.path.join(OUTPUT_DIR, log_filename)
+        # --- END OF NEW CODE ---
 
-    file_path = os.path.join(INPUT_DIR, SPREADSHEET_FILENAME)
-    process_spreadsheet(file_path, classifier_client)
+        # --- MODIFIED: Pass log path to client ---
+        classifier_client = EmotionClassifierClient(log_file_path=log_file_path)
+        file_path = os.path.join(INPUT_DIR, SPREADSHEET_FILENAME)
+        process_spreadsheet(file_path, classifier_client)
+    except Exception as e:
+        print(f"\nScript terminated due to a critical error: {e}")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()

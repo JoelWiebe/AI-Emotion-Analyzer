@@ -11,17 +11,29 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL")
 # Directory Setup
 INPUT_DIR = "input_files"
 OUTPUT_DIR = "output_files"
-SPREADSHEET_FILENAME = "EmotionAnalysis_26Jul24_ValidationData.xlsx" #Modify as needed
+SPREADSHEET_FILENAME = "Full Data Uncoded.xlsx" # The name of your input spreadsheet
+
+# Data Processing Settings
+# The single question that all the text responses in the sheet are answering.
+QUESTION = "Are you satisfied with the current care arrangements? Please explain your response"
+# The name of the sheet within the spreadsheet to process.
+SHEET_NAME = "Validation Set" # Modify as needed (e.g., "Concerns", "Challenges")
+# Number of text excerpts to process in a single API call.
+BATCH_SIZE = 5
+# Add any column names from the input sheet that should be passed to the model for context.
+CONTEXT_COLUMNS = ["Parent_Satisfied", "Current_Child_Care_Arrangement"]
 
 # Data Extraction Targets (modify as needed)
 EMOTION_CODEBOOK = {
     "anger": {
-        "description": "Any instance where parents feel blocked from their goal and/or are treated unfairly.",
+        "description": "Parents feel blocked from pursuing a goal and/or are treated unfairly.",
         "examples": [
-            "i still pay 100% of the daycare fee per month regardless of whether my child attends daycare, and because of the setting, my child is sick at least for 1x week every month and my subsidy then gets reduced so it costs me more money when my child isn't even there", 
-            "There is an extreme lack of availability for childcare in Ontario. To the point of where I am currently intending to change professions to become a childcare provider.",
-            "It’s SO hard to get a spot. The wait list I’m on is 2 years!",
-            "EXTREMELY difficult to find childcare. Me finding it was a total fluke."
+            "It is too difficult to handle work while having a child at home full time.",
+            "I’m a stay at home mom I don’t go nowhere they got me 24/7",
+            "It’s very hard to work or even just to do something small. I feel very exhausted, lonely, and like almost crazy.",
+            "Constant turn over. Quality is lacking.",
+            "Her parents are raising her. Not the government ",
+            "3 year wait list"
         ],
         "chain_of_thought": """
             To classify the excerpt as anger, ensure the following conditions are met:
@@ -41,12 +53,11 @@ EMOTION_CODEBOOK = {
         """
     },
     "fear": {
-        "description": "Any instance where parents feel the threat or worry of physical, emotional, or psychological harm (real or imagined).",
+        "description": "Parents feel the threat of physical, emotional, or psychological harm (real or imagined).",
         "examples": [
-            "Very difficult to get into daycares that are decent. Demand has shot up and wait lists are years long. We don’t know what we will do for our youngest child when we need it",
-            "Worried that there will be such shortage of good quality childcare because of the influx of children.",
-            "leaving my kids with strangers constant worrying about my kids"
-            ],
+            "I am very concerned that I will not be able to find two daycare spots when I need to return to work. ",
+            "That so scary"
+        ],
         "chain_of_thought": """
             To classify the excerpt as fear, ensure the following conditions are met:
 
@@ -65,12 +76,9 @@ EMOTION_CODEBOOK = {
         """
     },
     "disgust": {
-        "description": "Any instances where parents feel aversion towards something offensive or socially/morally reprehensible.",
+        "description": "Parents feel aversion towards something offensive or socially/morally reprehensible (i.e., perceived physical senses, actions of others, or ideas).",
         "examples": [
-            "The arrangement is too confusing",
-            "It’s too repetitive and people take advantage of it too much",
-            "I dont trust child care facility owners. The ones I've heard of are cheap and cut corners and treat their employees terrible.",
-            "Government programs always suck"
+            "I dont trust in child care programs"
         ],
         "chain_of_thought": """
             To classify the excerpt as disgust, ensure the following conditions are met:
@@ -89,12 +97,10 @@ EMOTION_CODEBOOK = {
         """
     },
     "sadness": {
-        "description": "Any instances where parents feel disappointment or a sense of loss for someone or something.",
+        "description": "Parents feel disappointment and longing or a sense of loss for someone or something.",
         "examples": [
-            "Can't get into waiting list",
-            "There are huge waitlists for spaces, I can't find spots for my younger children",
-            "Cuts to resources, daycare centre considering not participating anymore because can't afford to keep running",
-            "We did not qualify the second year because we had financial difficulties and had to cash in our RSVPs so it looked like our yearly income far exceeded the  maximum income for the rebate"
+            "I am not at all satisfied with the quality of care but it is the only childcare option in my area",
+            "I have nobody to watch my child in order for one of us to find a job so that we can qualify for more assistance."
         ],
         "chain_of_thought": """
             To classify the excerpt as sadness, ensure the following conditions are met:
@@ -114,13 +120,12 @@ EMOTION_CODEBOOK = {
         """
     },
     "enjoyment": {
-        "description": "Any instances where parents feel a sense of connection or pleasure. ",
+        "description": "Parents feel a sense of connection or pleasure.",
         "examples": [
-            "Daycare costs are lower, allowing us to spend more money on paying down our mortgage, increase retirement savings, etc.",
-            "It gives a children a good start in life",
-            "More money",
-            "It cut my daycare cost in half",
-            "My baby's daycare is subsidised and this is a great relief to us"
+            "They are very good with my child. The area is clean and they have the appropriate caregivers.",
+            "My child is more independent, and he enjoys going daycare. The staff are amazing.",
+            "It having amazing impact on my mental peace",
+            "Its good to have this programm so that low income family like us can survive in the country."
         ],
         "chain_of_thought": """
             To classify the excerpt as enjoyment, ensure the following conditions are met:
@@ -140,10 +145,9 @@ EMOTION_CODEBOOK = {
         """
     },
     "surprise": {
-        "description": "Any instances where parents encounter sudden and unexpected changes/occurrences.",
+        "description": "Parents encounter sudden and unexpected changes/occurrences.",
         "examples": [
-            "This is the first time I have ever seen a few episodes of",
-            "my fees are $183 a month which is unheard of from my friends in Ontario"
+            "This is the first time I have ever seen a few episodes"
         ],
         "chain_of_thought": """
             To classify the excerpt as surprise, ensure the following conditions are met:
@@ -162,13 +166,9 @@ EMOTION_CODEBOOK = {
         """
     },
     "neutral": {
-        "description": "Any instances where parents state information without evidence of emotion.",
+        "description": "Parents state information without evidence of emotion.",
         "examples": [
-            "nothing", 
-            "Staff shortages.",
-            "Space",
-            "I have heard from parents that there is a long waiting list to the program.",
-            "Cost of living"
+            "My mum takes care of my kid"
         ],
         "chain_of_thought": """
             To classify the excerpt as neutral, ensure the following conditions are met:
