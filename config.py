@@ -20,8 +20,6 @@ QUESTION = "Are you satisfied with the current care arrangements? Please explain
 SHEET_NAME = "Validation Set" # Modify as needed (e.g., "Concerns", "Challenges")
 # Number of text excerpts to process in a single API call.
 BATCH_SIZE = 5
-# Add any column names from the input sheet that should be passed to the model for context.
-CONTEXT_COLUMNS = ["Parent_Satisfied", "Current_Child_Care_Arrangement"]
 
 # Data Extraction Targets (modify as needed)
 EMOTION_CODEBOOK = {

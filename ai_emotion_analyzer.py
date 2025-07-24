@@ -100,6 +100,17 @@ class EmotionClassifierClient:
 
         contents = [prompt]
 
+        system_instruction = types.Content(
+            parts=[
+                types.Part(text=(
+                    "You are an expert research assistant specializing in the analysis of emotions in text. "
+                    "Your task is to meticulously classify the specific emotions conveyed in excerpts from parent responses. "
+                    "For each excerpt, you must provide a confidence score and a detailed justification for each emotion listed in the provided codebook. "
+                    "Adhere strictly to the codebook definitions and the required JSON output format."
+                ))
+            ]
+        )
+
         generation_config = types.GenerateContentConfig(
             temperature=0.2,
             top_p=0.95,
@@ -109,10 +120,10 @@ class EmotionClassifierClient:
                 types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
                 types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
                 types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
-            ]
+            ],
+            system_instruction=system_instruction
         )
 
-        # --- Log and display the prompt ---
         log_header = f"""
 {'='*80}
 BATCH {batch_num}/{total_batches} - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
@@ -125,25 +136,22 @@ BATCH {batch_num}/{total_batches} - {datetime.datetime.now().strftime('%Y-%m-%d 
         with open(self.log_file_path, 'a', encoding='utf-8') as f:
             f.write(log_header)
             f.write(prompt + '\n')
-        # --- END OF LOGIC ---
 
         try:
             response_chunks = self.client.models.generate_content_stream(
                 model=GEMINI_MODEL,
                 contents=contents,
-                config=generation_config,
+                config=generation_config
             )
             
             full_response_text = "".join(chunk.text for chunk in response_chunks)
             
-            # --- Log and display the response ---
             response_header = "\n---------- FULL RESPONSE FROM MODEL ----------\n"
             print(response_header)
             print(full_response_text)
             with open(self.log_file_path, 'a', encoding='utf-8') as f:
                 f.write(response_header)
                 f.write(full_response_text + '\n')
-            # --- END OF LOGIC ---
 
             clean_response = re.sub(r'```json\s*(.*)\s*```', r'\1', full_response_text, flags=re.DOTALL)
             return json.loads(clean_response)
@@ -194,13 +202,11 @@ def process_spreadsheet(file_path, classifier_client):
         batch_num = (i // BATCH_SIZE) + 1
         print(f"--- Processing Batch {batch_num}/{total_batches} ---")
         
-        # Pass batch numbers for logging
         results = classifier_client.classify_batch(model_batch_payload, batch_num, total_batches)
         for result in results:
             if result.get("NewID") and result.get("analysis"):
                 results_map[result["NewID"]] = json.dumps(result["analysis"])
 
-    # The output dataframe will only contain the base columns plus the model response.
     output_df = df[all_required_columns].copy()
     output_df['Model_Response'] = output_df['NewID'].map(results_map)
 
@@ -217,13 +223,11 @@ def main():
     try:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         
-        # Set up log file path
         now = datetime.datetime.now()
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
         log_filename = f"prompt_log_{timestamp}.txt"
         log_file_path = os.path.join(OUTPUT_DIR, log_filename)
 
-        # Pass log path to client
         classifier_client = EmotionClassifierClient(log_file_path=log_file_path)
         file_path = os.path.join(INPUT_DIR, SPREADSHEET_FILENAME)
         process_spreadsheet(file_path, classifier_client)

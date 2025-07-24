@@ -3,7 +3,7 @@
 import pandas as pd
 import json
 import argparse
-from config import EMOTION_CODEBOOK, CONTEXT_COLUMNS
+from config import EMOTION_CODEBOOK
 
 def process_results(file_path, threshold):
     """
@@ -27,7 +27,7 @@ def process_results(file_path, threshold):
     detailed_data = []
     summary_data = []
     
-    base_cols = ["ResponseID", "NewID"] + CONTEXT_COLUMNS + ["Text"]
+    base_cols = ["ResponseID", "NewID", "Text"]
     
     for index, row in df.iterrows():
         if pd.isna(row['Model_Response']):
@@ -60,7 +60,7 @@ def process_results(file_path, threshold):
 
             detailed_data.append(detailed_row)
 
-            # --- NEW: Prepare data for the Top_Emotion_Summary sheet ---
+            # --- Prepare data for the Top_Emotion_Summary sheet ---
             summary_row = {col: row[col] for col in base_cols}
             top_emotion = 'neutral'
             top_score = 0.0
@@ -118,7 +118,6 @@ def process_results(file_path, threshold):
 def main():
     parser = argparse.ArgumentParser(description="Process LLM raw output to create detailed analysis and summary sheets.")
     parser.add_argument("--file", type=str, required=True, help="Path to the Excel file with LLM raw output.")
-    # --- FIX: Changed add-argument to add_argument ---
     parser.add_argument("--threshold", type=float, required=True, help="A cutoff score (e.g., 0.6) to classify an emotion as present.")
     
     args = parser.parse_args()
